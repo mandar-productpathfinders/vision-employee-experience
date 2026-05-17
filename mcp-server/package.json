@@ -1,0 +1,15 @@
+{
+  "name": "vision-employee-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP tool gateway for the Vision Enterprise Employee Experience use case",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "axios": "^1.7.7"
+  }
+}

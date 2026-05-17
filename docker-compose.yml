@@ -1,0 +1,168 @@
+version: "3.9"
+
+# =============================================================================
+# Vision Enterprise  —  Use Case 2: Employee Experience Transformation
+# Three-layer architecture, fully containerised.
+#   Layer 1 (Data)     : postgres, redis
+#   Layer 2 (Services) : 7 FastAPI microservices + Express MCP gateway
+#   Layer 3 (Agent+UI) : Node agent runtime, Next.js frontend
+# =============================================================================
+
+services:
+
+  # -------- Layer 1: Data ----------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ve-emp-postgres
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-visionuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-visionpass}
+      POSTGRES_DB:       ${POSTGRES_DB:-vision_employee}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./infra/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-visionuser} -d ${POSTGRES_DB:-vision_employee}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: ve-emp-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--maxmemory-policy", "allkeys-lru", "--maxmemory", "256mb"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -------- Layer 2: FastAPI microservices -----------------------------------
+
+  hrms-api:
+    build: ./services/hrms-api
+    container_name: ve-hrms-api
+    environment: &svc_env
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     "5432"
+      POSTGRES_USER:     ${POSTGRES_USER:-visionuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-visionpass}
+      POSTGRES_DB:       ${POSTGRES_DB:-vision_employee}
+      REDIS_HOST:        redis
+      REDIS_PORT:        "6379"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    ports: ["8101:8101"]
+
+  onboarding-api:
+    build: ./services/onboarding-api
+    container_name: ve-onboarding-api
+    environment: *svc_env
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["8102:8102"]
+
+  access-api:
+    build: ./services/access-api
+    container_name: ve-access-api
+    environment: *svc_env
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["8103:8103"]
+
+  documents-api:
+    build: ./services/documents-api
+    container_name: ve-documents-api
+    environment: *svc_env
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["8104:8104"]
+
+  calendar-api:
+    build: ./services/calendar-api
+    container_name: ve-calendar-api
+    environment: *svc_env
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["8105:8105"]
+
+  admin-api:
+    build: ./services/admin-api
+    container_name: ve-admin-api
+    environment: *svc_env
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["8106:8106"]
+
+  announcement-api:
+    build: ./services/announcement-api
+    container_name: ve-announcement-api
+    environment: *svc_env
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["8107:8107"]
+
+  # -------- Layer 2.5: MCP Gateway -------------------------------------------
+
+  mcp-server:
+    build: ./mcp-server
+    container_name: ve-emp-mcp-server
+    environment:
+      PORT: "8100"
+      ADMIN_API_URL: http://admin-api:8106
+      TOOL_RELOAD_INTERVAL_MS: "5000"
+    depends_on: [admin-api]
+    ports: ["8100:8100"]
+
+  # -------- Layer 3: Agent + Frontend ----------------------------------------
+
+  agent:
+    build: ./agent
+    container_name: ve-agent
+    environment:
+      PORT: "8200"
+      MCP_SERVER_URL: http://mcp-server:8100
+      ADMIN_API_URL:  http://admin-api:8106
+      HRMS_API_URL:   http://hrms-api:8101
+      # Model switching — matches UC1 story
+      MODEL_PROVIDER:    ${MODEL_PROVIDER:-anthropic}      # anthropic | openai
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL:   ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      OPENAI_API_KEY:    ${OPENAI_API_KEY:-}
+      OPENAI_MODEL:      ${OPENAI_MODEL:-gpt-4o}
+    depends_on: [mcp-server]
+    ports: ["8200:8200"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # NEXT_PUBLIC_* must be baked in at BUILD time (Next.js embeds them
+        # into the client bundle). The browser calls these URLs from the host,
+        # so they use localhost ports, not the docker-internal service names.
+        NEXT_PUBLIC_AGENT_URL:           http://localhost:8200
+        NEXT_PUBLIC_ADMIN_API_URL:       http://localhost:8106
+        NEXT_PUBLIC_HRMS_API_URL:        http://localhost:8101
+        NEXT_PUBLIC_ONBOARDING_API_URL:  http://localhost:8102
+        NEXT_PUBLIC_ACCESS_API_URL:      http://localhost:8103
+        NEXT_PUBLIC_DOCS_API_URL:        http://localhost:8104
+        NEXT_PUBLIC_CAL_API_URL:         http://localhost:8105
+        NEXT_PUBLIC_MCP_URL:             http://localhost:8100
+    container_name: ve-emp-frontend
+    environment:
+      # Server-side URLs (used if we ever add Next.js API routes / SSR fetches).
+      AGENT_URL:     http://agent:8200
+      ADMIN_API_URL: http://admin-api:8106
+      HRMS_API_URL:  http://hrms-api:8101
+    depends_on: [agent]
+    ports: ["3000:3000"]
+
+volumes:
+  pgdata:

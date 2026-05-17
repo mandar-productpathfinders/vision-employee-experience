@@ -1,0 +1,28 @@
+# Node
+node_modules/
+.next/
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env.local
+
+# Env + secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Build artefacts
+dist/
+build/

@@ -1,0 +1,38 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# NEXT_PUBLIC_* values are baked in at build time
+ARG NEXT_PUBLIC_AGENT_URL=http://localhost:8200
+ARG NEXT_PUBLIC_ADMIN_API_URL=http://localhost:8106
+ARG NEXT_PUBLIC_HRMS_API_URL=http://localhost:8101
+ARG NEXT_PUBLIC_ONBOARDING_API_URL=http://localhost:8102
+ARG NEXT_PUBLIC_ACCESS_API_URL=http://localhost:8103
+ARG NEXT_PUBLIC_DOCS_API_URL=http://localhost:8104
+ARG NEXT_PUBLIC_CAL_API_URL=http://localhost:8105
+ARG NEXT_PUBLIC_MCP_URL=http://localhost:8100
+ENV NEXT_PUBLIC_AGENT_URL=$NEXT_PUBLIC_AGENT_URL
+ENV NEXT_PUBLIC_ADMIN_API_URL=$NEXT_PUBLIC_ADMIN_API_URL
+ENV NEXT_PUBLIC_HRMS_API_URL=$NEXT_PUBLIC_HRMS_API_URL
+ENV NEXT_PUBLIC_ONBOARDING_API_URL=$NEXT_PUBLIC_ONBOARDING_API_URL
+ENV NEXT_PUBLIC_ACCESS_API_URL=$NEXT_PUBLIC_ACCESS_API_URL
+ENV NEXT_PUBLIC_DOCS_API_URL=$NEXT_PUBLIC_DOCS_API_URL
+ENV NEXT_PUBLIC_CAL_API_URL=$NEXT_PUBLIC_CAL_API_URL
+ENV NEXT_PUBLIC_MCP_URL=$NEXT_PUBLIC_MCP_URL
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+EXPOSE 3000
+CMD ["node", "server.js"]

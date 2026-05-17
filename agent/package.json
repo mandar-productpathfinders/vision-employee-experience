@@ -1,0 +1,17 @@
+{
+  "name": "vision-employee-agent",
+  "version": "1.0.0",
+  "description": "Vision Enterprise Onboarding Agent — prompt-driven, tools via MCP",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "axios": "^1.7.7",
+    "@anthropic-ai/sdk": "^0.32.1",
+    "openai": "^4.67.3"
+  }
+}
