@@ -49,7 +49,7 @@ Agent  (Node, port 8200)
         ├─── 3. inject employee context — append "you are helping employee_id = E1001"
         │
         ├─── 4. Anthropic API call (or OpenAI — provider abstracted)
-        │         model: claude-sonnet-4-5  (default)
+        │         model: claude-sonnet-4-6  (default)
         │         system: [ROUTER + JUST_JOINED + context]
         │         tools: [9 or 10 tools]
         │
@@ -109,7 +109,7 @@ You should see the Employee Portal with:
 - A **chat panel** with an input box
 - A **trace toggle** to show/hide the agent's reasoning
 
-> **Windows/Turbopack note:** If the page does not update after code changes, run `docker restart ve-uc2-frontend` and hard-refresh the browser (`Ctrl+Shift+R`).
+> **Windows/Turbopack note:** If the page does not update after code changes, run `docker restart ve-emp-frontend` and hard-refresh the browser (`Ctrl+Shift+R`).
 
 ---
 
@@ -193,7 +193,7 @@ res.json({
 
 `prompt_version` shows in the chat panel footer. After an admin saves a new version, the next response shows `v2`, then `v3`, and so on.
 
-When the response arrives, you will see Arjun greeted by name, with a brief acknowledgement of his onboarding status. Look at the footer of the chat panel — `prompt_version: 1`, `tool_count: 9` (or 10), `model: claude-sonnet-4-5`.
+When the response arrives, you will see Arjun greeted by name, with a brief acknowledgement of his onboarding status. Look at the footer of the chat panel — `prompt_version: 1`, `tool_count: 9` (or 10), `model: claude-sonnet-4-6`.
 
 ---
 
@@ -330,7 +330,7 @@ The DOCUMENT and CONNECT categories are not currently in the form modal — they
 Fill in any one tab and click Submit. Verify in psql:
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT * FROM hr_profile_submissions ORDER BY id DESC LIMIT 1;"
 ```
 
@@ -377,7 +377,7 @@ The response now opens with a personalised welcome. Check the chat footer: `prom
 In psql:
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT event_code, version, is_active, updated_by, updated_at FROM admin_prompts WHERE event_code='JUST_JOINED' ORDER BY version DESC;"
 ```
 
@@ -431,7 +431,7 @@ So the agent will confirm first:
 Reply `yes`. The agent calls the new tool. Verify the announcement was queued:
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT id, employee_id, subject, status FROM announcement_queue ORDER BY id DESC LIMIT 1;"
 ```
 
@@ -529,7 +529,7 @@ The agent's `runTurn()` function lives in `agent/lib/provider.js`. It has two im
 // Anthropic
 async function runTurnAnthropic({ system, messages, tools }) {
   const response = await anthropic.messages.create({
-    model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+    model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
     max_tokens: 4096,
     system,
     tools: tools.map(toAnthropicTool),
@@ -582,7 +582,7 @@ T3.4 — Chat with Arjun, request laptop only
   Reply with "Mac" and "Bengaluru office"
   Expected: agent confirms submission in one line
             Tasks panel: JJ_IT_ONBOARDING flips to completed
-            Footer: prompt_version: 1, tool_count: 9 (or 10), model: claude-sonnet-4-5
+            Footer: prompt_version: 1, tool_count: 9 (or 10), model: claude-sonnet-4-6
 
 T3.5 — Chat with Vishy, request laptop (standalone)
   Select: Vishwanath Rao
@@ -684,7 +684,7 @@ curl -s "http://localhost:8200/debug/tools?event_code=JUST_JOINED" | python3 -c 
 # Expected: 9 or 10 tools depending on whether you ran T3.14
 
 # T3.19 — Confirm trace persistence is not yet wired (Practitioner Challenge 2)
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT COUNT(*) FROM agent_traces;"
 # Expected: count = 0
 # The schema is ready; the agent does not yet write here.

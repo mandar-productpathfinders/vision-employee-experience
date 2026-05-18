@@ -25,7 +25,7 @@ Vision Enterprise Use Case 2 is an AI Agent powered Employee Portal that guides 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    ve-uc2-internal network                   │
+│           docker-compose default network                     │
 │                                                             │
 │  ┌─────────────────────┐         ┌──────────────────┐      │
 │  │     PostgreSQL      │         │      Redis       │      │
@@ -146,46 +146,50 @@ Open `docker-compose.yml`. This is the single file that defines the entire syste
 
 ```yaml
 postgres:
-  image: postgres:16-alpine          # Docker image to use
-  container_name: ve-uc2-postgres    # Name used in docker commands
-  ports:
-    - "5432:5432"                    # host_port:container_port
-  volumes:
-    - postgres-uc2-data:/var/lib/postgresql/data           # persist data
-    - ./infra/db:/docker-entrypoint-initdb.d:ro            # auto-run SQL on first start
+  image: postgres:16-alpine
+  container_name: ve-emp-postgres
   environment:
-    POSTGRES_DB: vision_uc2
-    POSTGRES_USER: ve_user
-    POSTGRES_PASSWORD: ve_pass_dev
+    POSTGRES_USER:     ${POSTGRES_USER:-visionuser}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-visionpass}
+    POSTGRES_DB:       ${POSTGRES_DB:-vision_employee}
+  ports:
+    - "5432:5432"
+  volumes:
+    - pgdata:/var/lib/postgresql/data
+    - ./infra/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    - ./infra/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U ve_user -d vision_uc2"]
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-visionuser} -d ${POSTGRES_DB:-vision_employee}"]
     interval: 5s
+    timeout: 3s
     retries: 10
-  networks:
-    - ve-uc2-internal
 ```
 
 Key concepts:
-- **ports:** `"5432:5432"` means "expose container port 5432 as host port 5432"
-- **volumes:** `postgres-uc2-data` is a named Docker volume — your data survives `docker compose down`
-- **`docker-entrypoint-initdb.d`:** Postgres automatically runs any `.sql` files in this directory the **first time** the container starts. This is how `schema.sql` and `seed.sql` get loaded.
-- **healthcheck:** Docker polls this command; services with `depends_on: condition: service_healthy` wait for it to pass
-- **networks:** All services on `ve-uc2-internal` can reach each other by container name (for example, `http://hrms-api:8101`)
+- **`${POSTGRES_USER:-visionuser}`:** Docker Compose substitutes the value from `.env` if set; otherwise falls back to the default after the `:-`. This is why your `.env` file declares `POSTGRES_USER=visionuser` — change it there and every service that consumes this variable picks up the new value.
+- **ports:** `"5432:5432"` means "expose container port 5432 as host port 5432" so you can `psql` from your laptop.
+- **volumes:** `pgdata` is a named Docker volume — your data survives `docker compose down`. The two file mounts beneath it place `schema.sql` and `seed.sql` into `/docker-entrypoint-initdb.d/` with the `01_` and `02_` prefixes so they execute **in order** on first start.
+- **`docker-entrypoint-initdb.d`:** Postgres automatically runs any `.sql` files in this directory the **first time** the container starts. This is how the schema is built and the seed data is loaded.
+- **healthcheck:** Docker polls this command; services with `depends_on: condition: service_healthy` wait for it to pass. The 3-second timeout and 10 retries give Postgres up to ~50 seconds to come up.
+- **Networking:** the compose file does not declare a custom network. Docker Compose creates a default network for the project (typically `vision-employee-experience_default`). All services on this network can reach each other by service name — for example, the `hrms-api` container reaches Postgres as `http://postgres:5432`.
 
 ### 2.2 The Redis Service Block
 
 ```yaml
 redis:
   image: redis:7-alpine
-  container_name: ve-uc2-redis
+  container_name: ve-emp-redis
   ports:
     - "6379:6379"
-  command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-  networks:
-    - ve-uc2-internal
+  command: ["redis-server", "--maxmemory-policy", "allkeys-lru", "--maxmemory", "256mb"]
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
 ```
 
-The `command:` override caps Redis at 256MB and tells it to evict the least-recently-used keys when the cap is reached. This is the right policy for a cache (versus, say, an event queue, where eviction would lose data).
+The `command:` override (in array form, which avoids shell-quoting surprises) caps Redis at 256 MB and tells it to evict the least-recently-used keys when the cap is reached. This is the right policy for a cache (versus, say, an event queue, where eviction would lose data). The healthcheck below it lets dependent services wait until Redis is actually responding to `PING` before they start their own readiness checks.
 
 ### 2.3 Why Postgres and Redis (and Not a Vector Database)?
 
@@ -254,7 +258,7 @@ What gets seeded:
 Connect to PostgreSQL:
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee
 ```
 
 You are now in the `psql` prompt. Type `\dt` to list all tables:
@@ -263,20 +267,20 @@ You are now in the `psql` prompt. Type `\dt` to list all tables:
                 List of relations
  Schema |          Name              | Type  |  Owner
 --------+----------------------------+-------+---------
- public | access_requests            | table | ve_user
- public | admin_prompts              | table | ve_user
- public | admin_tools                | table | ve_user
- public | agent_traces               | table | ve_user
- public | announcement_queue         | table | ve_user
- public | connect_meetings           | table | ve_user
- public | document_acceptances       | table | ve_user
- public | employee_events            | table | ve_user
- public | employee_task_status       | table | ve_user
- public | employees                  | table | ve_user
- public | event_tasks                | table | ve_user
- public | events                     | table | ve_user
- public | hr_profile_submissions     | table | ve_user
- public | it_onboarding_submissions  | table | ve_user
+ public | access_requests            | table | visionuser
+ public | admin_prompts              | table | visionuser
+ public | admin_tools                | table | visionuser
+ public | agent_traces               | table | visionuser
+ public | announcement_queue         | table | visionuser
+ public | connect_meetings           | table | visionuser
+ public | document_acceptances       | table | visionuser
+ public | employee_events            | table | visionuser
+ public | employee_task_status       | table | visionuser
+ public | employees                  | table | visionuser
+ public | event_tasks                | table | visionuser
+ public | events                     | table | visionuser
+ public | hr_profile_submissions     | table | visionuser
+ public | it_onboarding_submissions  | table | visionuser
 ```
 
 Fourteen tables, grouped into six categories.
@@ -378,7 +382,7 @@ Type `\q` to exit psql. We will come back.
 This is the first of the two "prompt-as-policy" tables. Reconnect:
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee
 ```
 
 List the prompts:
@@ -520,7 +524,7 @@ In Use Case 2, Redis caches one thing: **the HRMS profile**. The agent reads the
 Connect to Redis and confirm it is reachable:
 
 ```bash
-docker exec -it ve-uc2-redis redis-cli ping
+docker exec -it ve-emp-redis redis-cli ping
 ```
 
 Expected: `PONG`
@@ -539,35 +543,35 @@ docker compose ps
 # Expected: postgres and redis show status "running" or "healthy"
 
 # T1.2 — Schema was created (14 tables)
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';"
 # Expected:  count
 #           -------
 #              14
 
 # T1.3 — Both demo employees exist
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT employee_id, full_name, department FROM employees WHERE employee_id IN ('E1001','E1002');"
 # Expected: 2 rows — Arjun Kumar (Engineering), Vishwanath Rao (Product)
 
 # T1.4 — Arjun is in JUST_JOINED, Vishy is not
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT employee_id, event_code, status FROM employee_events ORDER BY employee_id;"
 # Expected: 1 row — E1001, JUST_JOINED, active
 # (Vishy E1002 has no row — this is the demo contrast)
 
 # T1.5 — Task catalogue has 9 tasks across 3 categories
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT category, COUNT(*) FROM event_tasks WHERE event_code='JUST_JOINED' GROUP BY category ORDER BY category;"
 # Expected: CONNECT 3, DOCUMENT 3, SYSTEM 3
 
 # T1.6 — All 9 of Arjun's tasks are pending
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT status, COUNT(*) FROM employee_task_status WHERE employee_id='E1001' GROUP BY status;"
 # Expected: pending 9
 
 # T1.7 — Two prompts seeded: ROUTER and JUST_JOINED
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT event_code, version, is_active FROM admin_prompts ORDER BY event_code;"
 # Expected:
 #  event_code  | version | is_active
@@ -576,18 +580,18 @@ docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
 #  ROUTER      |       1 | t
 
 # T1.8 — Nine system tools seeded, none admin-added yet
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT is_system, COUNT(*) FROM admin_tools GROUP BY is_system;"
 # Expected: is_system=t count=9
 # (No is_system=f rows — those would be admin-added; you will add one in Lab 3)
 
 # T1.9 — The announcement tool is intentionally missing
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT COUNT(*) FROM admin_tools WHERE tool_name='send_joiner_announcement';"
 # Expected: count = 0 (you will add this in Lab 3)
 
 # T1.10 — Submissions tables are empty (nobody has filled a form yet)
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT
         (SELECT COUNT(*) FROM it_onboarding_submissions)  AS it_count,
         (SELECT COUNT(*) FROM hr_profile_submissions)     AS hr_count,
@@ -597,11 +601,11 @@ docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
 # Expected: all five counts = 0
 
 # T1.11 — Redis is reachable
-docker exec -it ve-uc2-redis redis-cli ping
+docker exec -it ve-emp-redis redis-cli ping
 # Expected: PONG
 
 # T1.12 — Redis profile cache is empty (no profile reads yet)
-docker exec -it ve-uc2-redis redis-cli keys 'profile:*'
+docker exec -it ve-emp-redis redis-cli keys 'profile:*'
 # Expected: (empty array)
 # After Lab 2 you will run a profile fetch and a second key 'profile:E1001' will appear.
 ```
@@ -616,7 +620,7 @@ All 12 tests passing means your data layer is ready for Lab 2.
 |---------|-------------|-----|
 | `docker compose ps` shows "starting" for >60s | Docker image still downloading | Wait, then `docker compose logs postgres` |
 | Postgres logs show "could not bind to port 5432" | UC1 Postgres still running | `docker compose -p vision-enterprise down`, then retry |
-| `psql: command not found` | Running locally instead of in the container | Use `docker exec -it ve-uc2-postgres psql ...` |
+| `psql: command not found` | Running locally instead of in the container | Use `docker exec -it ve-emp-postgres psql ...` |
 | `\dt` shows 0 tables | Schema did not run — likely a re-attached volume from a previous broken run | `docker compose down -v` to wipe the volume, then `docker compose up -d postgres redis` |
 | `admin_prompts` table has 0 rows | Seed did not complete | `docker compose logs postgres | grep -i error` |
 | Tools count is not 9 | Same as above — re-seed | `docker compose down -v`, then `docker compose up -d postgres redis` |

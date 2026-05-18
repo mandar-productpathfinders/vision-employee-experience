@@ -176,7 +176,7 @@ The response confirms the submission. The service did three things behind the sc
 
 Verify in psql (in a separate terminal):
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT employee_id, laptop_preference, drop_destination, work_number, cost_center FROM it_onboarding_submissions ORDER BY id DESC LIMIT 1;"
 ```
 
@@ -421,14 +421,14 @@ It writes to `connect_meetings` (status `booked`, a chosen slot, the manager's n
 **Step 4 — Verify the result:**
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT employee_id, meeting_type, status, booked_with, booked_slot FROM connect_meetings ORDER BY id DESC LIMIT 1;"
 ```
 
 You should see a row for E1001, MANAGER_INTRO, status=booked, booked_with=Priya Nair, with the chosen slot.
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT status FROM employee_task_status WHERE employee_id='E1001' AND task_code='JJ_MANAGER_INTRO';"
 ```
 
@@ -516,7 +516,7 @@ curl -s -X POST http://localhost:8100/tools/call \
 Verify in the database:
 
 ```bash
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT id, subject, status FROM announcement_queue ORDER BY id DESC LIMIT 1;"
 ```
 
@@ -583,7 +583,7 @@ curl -s -X POST http://localhost:8102/it-onboarding \
 # Expected: {"ok": true, ...}
 
 # T2.6 — Submission was captured AND task auto-marked complete
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT status FROM employee_task_status WHERE employee_id='E1001' AND task_code='JJ_IT_ONBOARDING';"
 # Expected: completed
 
@@ -614,10 +614,10 @@ curl -s -X POST http://localhost:8100/tools/call \
 # Expected: ok: true, result.status = "booked"
 
 # T2.12 — The meeting row exists and the task is closed
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT meeting_type, status, booked_with FROM connect_meetings WHERE employee_id='E1001';"
 # Expected: at least one row, status = booked
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT status FROM employee_task_status WHERE employee_id='E1001' AND task_code='JJ_MANAGER_INTRO';"
 # Expected: completed
 
@@ -647,7 +647,7 @@ curl -s -X POST http://localhost:8100/tools/call \
 # Expected: ok: true, result indicates queued
 
 # T2.16 — Verify the announcement was queued
-docker exec -it ve-uc2-postgres psql -U ve_user -d vision_uc2 \
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT id, subject, status FROM announcement_queue ORDER BY id DESC LIMIT 1;"
 # Expected: one queued row with subject "Welcome"
 ```
