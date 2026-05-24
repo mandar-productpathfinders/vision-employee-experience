@@ -1367,7 +1367,14 @@ function HRProfileForm({
           tax_regime: regime,
         }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        const detail = body?.detail;
+        const msg = Array.isArray(detail)
+          ? detail.map((d: any) => `${d.loc?.slice(-1)[0]}: ${d.msg}`).join("; ")
+          : (typeof detail === "string" ? detail : `HTTP ${r.status}`);
+        throw new Error(msg);
+      }
       setStatus("Submitted.");
       onDone();
     } catch (e: any) {
