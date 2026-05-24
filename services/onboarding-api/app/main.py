@@ -4,7 +4,7 @@ Onboarding API  —  captures IT onboarding form and HR profile completion.
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from typing import Optional
 from .db import query_one, execute, execute_returning
 
@@ -86,26 +86,11 @@ def submit_it_onboarding(req: ITOnboardingReq):
 
 class HRProfileReq(BaseModel):
     employee_id: str
-    pan_number: str = Field(..., pattern=r"^[A-Z]{5}[0-9]{4}[A-Z]$")
-    bank_name: str = Field(..., min_length=2, max_length=100)
-    bank_account: str = Field(..., pattern=r"^\d{9,18}$")
-    ifsc_code: str = Field(..., pattern=r"^[A-Z]{4}0[A-Z0-9]{6}$")
+    pan_number: str
+    bank_name: str
+    bank_account: str
+    ifsc_code: str
     tax_regime: str = Field(..., pattern="^(OLD|NEW)$")
-
-    @field_validator("pan_number", "ifsc_code", mode="before")
-    @classmethod
-    def uppercase_and_strip(cls, v: str) -> str:
-        return v.strip().upper()
-
-    @field_validator("bank_account", mode="before")
-    @classmethod
-    def strip_account(cls, v: str) -> str:
-        return v.strip().replace(" ", "")
-
-    @field_validator("bank_name", mode="before")
-    @classmethod
-    def strip_name(cls, v: str) -> str:
-        return v.strip()
 
 
 @app.post("/hr-profile")
