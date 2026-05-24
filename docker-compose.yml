@@ -36,9 +36,9 @@ services:
     container_name: ve-emp-redis
     ports:
       - "6379:6379"
-    command: ["redis-server", "--maxmemory-policy", "allkeys-lru", "--maxmemory", "256mb"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-change-me-redis}", "--maxmemory-policy", "allkeys-lru", "--maxmemory", "256mb"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change-me-redis}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -56,6 +56,7 @@ services:
       POSTGRES_DB:       ${POSTGRES_DB:-vision_employee}
       REDIS_HOST:        redis
       REDIS_PORT:        "6379"
+      REDIS_PASSWORD:    ${REDIS_PASSWORD:-change-me-redis}
     depends_on:
       postgres: {condition: service_healthy}
       redis:    {condition: service_healthy}
@@ -64,7 +65,9 @@ services:
   onboarding-api:
     build: ./services/onboarding-api
     container_name: ve-onboarding-api
-    environment: *svc_env
+    environment:
+      <<: *svc_env
+      DB_ENCRYPTION_KEY: ${DB_ENCRYPTION_KEY:-change-me-before-production}
     depends_on:
       postgres: {condition: service_healthy}
     ports: ["8102:8102"]

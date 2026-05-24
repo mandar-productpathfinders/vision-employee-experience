@@ -176,3 +176,28 @@ def invalidate_cache(employee_id: str = Query(...)):
     from .db import get_redis
     get_redis().delete(f"hrms:profile:{employee_id}")
     return {"ok": True, "invalidated": f"hrms:profile:{employee_id}"}
+
+
+import json as _json
+
+@app.post("/traces")
+def save_trace(payload: dict):
+    """Persist a masked agent tool trace for audit purposes."""
+    execute(
+        """
+        INSERT INTO agent_traces
+          (employee_id, session_id, turn_number, tool_name, tool_input, tool_output, latency_ms, model)
+        VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
+        """,
+        (
+            payload.get("employee_id"),
+            payload.get("session_id"),
+            payload.get("turn"),
+            payload.get("tool"),
+            _json.dumps(payload.get("input")),
+            _json.dumps(payload.get("result")),
+            payload.get("latency_ms"),
+            payload.get("model"),
+        ),
+    )
+    return {"ok": True}

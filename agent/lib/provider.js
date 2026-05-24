@@ -26,7 +26,12 @@ const PROVIDER = (process.env.MODEL_PROVIDER || "anthropic").toLowerCase();
 // ---- Anthropic ------------------------------------------------------------
 
 function makeAnthropicClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    // Zero-data-retention: prevents Anthropic from storing or training on request data.
+    // Requires ZDR to be enabled on your Anthropic org — contact Anthropic support before production use.
+    defaultHeaders: { "anthropic-beta": "zdr-2025-04-01" },
+  });
 }
 
 async function runTurnAnthropic({ system, messages, tools }) {
@@ -156,6 +161,7 @@ async function runTurnOpenAI({ system, messages, tools }) {
       },
     })),
     tool_choice: "auto",
+    store: false,  // prevent OpenAI from storing this request for training
   });
 
   const choice = resp.choices[0];

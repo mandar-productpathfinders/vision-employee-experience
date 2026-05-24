@@ -1,11 +1,14 @@
 """
 Onboarding API  —  captures IT onboarding form and HR profile completion.
 """
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
 from .db import query_one, execute, execute_returning
+
+DB_ENCRYPTION_KEY = os.environ.get("DB_ENCRYPTION_KEY", "change-me-before-production")
 
 app = FastAPI(title="Vision Enterprise — Onboarding API", version="1.0")
 app.add_middleware(
@@ -83,10 +86,10 @@ def submit_it_onboarding(req: ITOnboardingReq):
 
 class HRProfileReq(BaseModel):
     employee_id: str
-    pan_number: str
-    bank_name: str
-    bank_account: str
-    ifsc_code: str
+    pan_number: str = Field(..., pattern=r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+    bank_name: str = Field(..., min_length=2, max_length=100)
+    bank_account: str = Field(..., pattern=r"^\d{9,18}$")
+    ifsc_code: str = Field(..., pattern=r"^[A-Z]{4}0[A-Z0-9]{6}$")
     tax_regime: str = Field(..., pattern="^(OLD|NEW)$")
 
 
@@ -96,11 +99,24 @@ def submit_hr_profile(req: HRProfileReq):
         """
         INSERT INTO hr_profile_submissions
           (employee_id, pan_number, bank_name, bank_account, ifsc_code, tax_regime)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        VALUES (
+          %s,
+          pgp_sym_encrypt(%s, %s),
+          %s,
+          pgp_sym_encrypt(%s, %s),
+          pgp_sym_encrypt(%s, %s),
+          %s
+        )
         RETURNING id, submitted_at::text AS submitted_at
         """,
-        (req.employee_id, req.pan_number, req.bank_name, req.bank_account,
-         req.ifsc_code, req.tax_regime),
+        (
+            req.employee_id,
+            req.pan_number,    DB_ENCRYPTION_KEY,
+            req.bank_name,
+            req.bank_account,  DB_ENCRYPTION_KEY,
+            req.ifsc_code,     DB_ENCRYPTION_KEY,
+            req.tax_regime,
+        ),
     )
     execute(
         """

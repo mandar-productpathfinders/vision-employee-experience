@@ -34,6 +34,25 @@ import { runTurn, toolResultMessage, activeProvider } from "./lib/provider.js";
 const PORT = parseInt(process.env.PORT || "8200", 10);
 const MCP_URL = process.env.MCP_SERVER_URL || "http://mcp-server:8100";
 const ADMIN_URL = process.env.ADMIN_API_URL || "http://admin-api:8106";
+const HRMS_URL = process.env.HRMS_API_URL || "http://hrms-api:8101";
+
+// PII fields to redact per tool before including in trace or logs
+const PII_FIELDS = {
+  submit_hr_profile: ["pan_number", "bank_account", "ifsc_code", "bank_name"],
+};
+
+function maskPiiFields(toolName, input) {
+  const fields = PII_FIELDS[toolName];
+  if (!fields) return input;
+  const masked = { ...input };
+  for (const f of fields) {
+    if (masked[f] !== undefined) masked[f] = "***";
+  }
+  return masked;
+}
+
+// Tools that must never be called directly by the agent — the frontend form handles them
+const FORM_ONLY_TOOLS = ["submit_hr_profile"];
 
 const app = express();
 app.use(cors());
@@ -175,15 +194,37 @@ app.post("/chat", async (req, res) => {
     // Dispatch each requested tool in parallel
     const results = await Promise.all(
       step.toolCalls.map(async (tc) => {
+        // Hard block: PII tools must be submitted via the secure frontend form, never via agent
+        if (FORM_ONLY_TOOLS.includes(tc.name)) {
+          trace.push({ turn, tool: tc.name, input: maskPiiFields(tc.name, tc.input), ok: false, latency_ms: 0, result: "Blocked: must use secure form" });
+          return {
+            id: tc.id,
+            output: { error: `${tc.name} collects sensitive PII and must be submitted via the secure form, not through chat. Emit FORM:JJ_HR_PROFILE to open the form.` },
+            isError: true,
+          };
+        }
+
         const out = await callTool(tc.name, tc.input);
-        trace.push({
+        const traceEntry = {
           turn,
           tool: tc.name,
-          input: tc.input,
+          input: maskPiiFields(tc.name, tc.input),
           ok: out.ok,
           latency_ms: out.latency_ms,
           result: out.ok ? out.result : out.error,
-        });
+        };
+        trace.push(traceEntry);
+        // Fire-and-forget masked audit record — never blocks the response
+        axios.post(`${HRMS_URL}/traces`, {
+          employee_id,
+          session_id,
+          turn: traceEntry.turn,
+          tool: traceEntry.tool,
+          input: traceEntry.input,
+          result: traceEntry.result,
+          latency_ms: traceEntry.latency_ms,
+          model: lastModel,
+        }, { timeout: 3000 }).catch(() => {});
         return {
           id: tc.id,
           output: out.ok ? out.result : { error: out.error, http_status: out.http_status },

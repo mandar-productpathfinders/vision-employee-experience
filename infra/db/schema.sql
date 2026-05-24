@@ -5,6 +5,8 @@
 -- Layers: employees/events -> tasks -> submissions -> admin/announcements
 -- =============================================================================
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- -----------------------------------------------------------------------------
 -- CORE: employees + events
 -- -----------------------------------------------------------------------------
@@ -92,10 +94,10 @@ CREATE TABLE IF NOT EXISTS it_onboarding_submissions (
 CREATE TABLE IF NOT EXISTS hr_profile_submissions (
     id           SERIAL       PRIMARY KEY,
     employee_id  VARCHAR(20)  NOT NULL REFERENCES employees(employee_id),
-    pan_number   VARCHAR(20),
+    pan_number   TEXT,                               -- pgp_sym_encrypt encrypted
     bank_name    VARCHAR(100),
-    bank_account VARCHAR(50),
-    ifsc_code    VARCHAR(20),
+    bank_account TEXT,                               -- pgp_sym_encrypt encrypted
+    ifsc_code    TEXT,                               -- pgp_sym_encrypt encrypted
     tax_regime   VARCHAR(20),                        -- OLD | NEW
     submitted_at TIMESTAMPTZ  DEFAULT NOW()
 );

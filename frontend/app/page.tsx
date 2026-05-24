@@ -99,6 +99,7 @@ export default function EmployeePortal() {
     tool_count?: number;
   }>({});
   const [showFormModal, setShowFormModal] = useState(false);
+  const [formModalConfig, setFormModalConfig] = useState<{ initialStep: 1 | 2; initialSelected: string[] }>({ initialStep: 1, initialSelected: [] });
   const [showTrace, setShowTrace] = useState(false);
 
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
@@ -175,14 +176,19 @@ export default function EmployeePortal() {
 
       let assistantText = (data.reply || "").trim() || "(no reply)";
 
-      // Detect the FORM:JUST_JOINED token and surface a button
-      const hasFormToken = /FORM:JUST_JOINED/i.test(assistantText);
-      if (hasFormToken) {
+      // Detect form tokens and open the appropriate modal config
+      const hasFullFormToken = /FORM:JUST_JOINED/i.test(assistantText);
+      const hasHRFormToken   = /FORM:JJ_HR_PROFILE/i.test(assistantText);
+      const hasFormToken = hasFullFormToken || hasHRFormToken;
+
+      if (hasFullFormToken) {
         assistantText = assistantText.replace(/FORM:JUST_JOINED/gi, "").trim();
-        if (!assistantText) {
-          assistantText =
-            "I can open the onboarding form so you can fill everything in one go.";
-        }
+        if (!assistantText) assistantText = "I can open the onboarding form so you can fill everything in one go.";
+        setFormModalConfig({ initialStep: 1, initialSelected: [] });
+      } else if (hasHRFormToken) {
+        assistantText = assistantText.replace(/FORM:JJ_HR_PROFILE/gi, "").trim();
+        if (!assistantText) assistantText = "Opening the secure HR profile form for you.";
+        setFormModalConfig({ initialStep: 2, initialSelected: ["JJ_HR_PROFILE"] });
       }
 
       setChat([...updatedChat, { role: "assistant", text: assistantText }]);
@@ -303,8 +309,19 @@ export default function EmployeePortal() {
           })}
         </div>
 
-        <h3 style={{ marginTop: 24 }}>Onboarding Tasks</h3>
-        <TaskList tasks={tasks} />
+        <h3 style={{ marginTop: 24 }}>
+          {activeEvents.length > 0 ? "Onboarding Tasks" : "Travel Tasks"}
+          {activeEvents.length === 0 && (
+            <span className="pill gray" style={{ marginLeft: 8, verticalAlign: "middle" }}>
+              Coming soon
+            </span>
+          )}
+        </h3>
+        {activeEvents.length > 0 ? (
+          <TaskList tasks={tasks} />
+        ) : (
+          <div className="small muted">Travel tasks are coming soon.</div>
+        )}
       </aside>
 
       {showFormModal && employeeId && (
@@ -313,6 +330,8 @@ export default function EmployeePortal() {
           tasks={tasks}
           onClose={() => setShowFormModal(false)}
           onCompleted={refreshEmployeeData}
+          initialStep={formModalConfig.initialStep}
+          initialSelected={formModalConfig.initialSelected}
         />
       )}
     </main>
@@ -695,14 +714,18 @@ function OnboardingFormModal({
   tasks,
   onClose,
   onCompleted,
+  initialStep = 1,
+  initialSelected = [],
 }: {
   employeeId: string;
   tasks: Task[];
   onClose: () => void;
   onCompleted: () => void;
+  initialStep?: 1 | 2;
+  initialSelected?: string[];
 }) {
-  const [step, setStep] = useState<1 | 2>(1);
-  const [selected, setSelected] = useState<string[]>([]);
+  const [step, setStep] = useState<1 | 2>(initialStep);
+  const [selected, setSelected] = useState<string[]>(initialSelected);
 
   function toggle(code: string) {
     setSelected((prev) =>
