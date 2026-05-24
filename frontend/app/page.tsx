@@ -1360,10 +1360,10 @@ function HRProfileForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employee_id: employeeId,
-          pan_number: pan,
-          bank_name: bank,
-          bank_account: acc,
-          ifsc_code: ifsc,
+          pan_number: pan.trim().toUpperCase(),
+          bank_name: bank.trim(),
+          bank_account: acc.trim().replace(/\s/g, ""),
+          ifsc_code: ifsc.trim().toUpperCase(),
           tax_regime: regime,
         }),
       });
@@ -1377,10 +1377,10 @@ function HRProfileForm({
 
   return (
     <>
-      <Field label="PAN"><input value={pan} onChange={(e) => setPan(e.target.value)} /></Field>
-      <Field label="Bank name"><input value={bank} onChange={(e) => setBank(e.target.value)} /></Field>
-      <Field label="Account number"><input value={acc} onChange={(e) => setAcc(e.target.value)} /></Field>
-      <Field label="IFSC"><input value={ifsc} onChange={(e) => setIfsc(e.target.value)} /></Field>
+      <Field label="PAN"><input value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" /></Field>
+      <Field label="Bank name"><input value={bank} onChange={(e) => setBank(e.target.value)} placeholder="State Bank of India" /></Field>
+      <Field label="Account number"><input value={acc} onChange={(e) => setAcc(e.target.value.replace(/\s/g, ""))} placeholder="123456789012" /></Field>
+      <Field label="IFSC"><input value={ifsc} onChange={(e) => setIfsc(e.target.value.toUpperCase())} placeholder="SBIN0001234" /></Field>
       <Field label="Tax regime">
         <select value={regime} onChange={(e) => setRegime(e.target.value)}>
           <option value="NEW">New</option>
