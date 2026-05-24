@@ -26,12 +26,9 @@ const PROVIDER = (process.env.MODEL_PROVIDER || "anthropic").toLowerCase();
 // ---- Anthropic ------------------------------------------------------------
 
 function makeAnthropicClient() {
-  return new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    // Zero-data-retention: prevents Anthropic from storing or training on request data.
-    // Requires ZDR to be enabled on your Anthropic org — contact Anthropic support before production use.
-    defaultHeaders: { "anthropic-beta": "zdr-2025-04-01" },
-  });
+  // Note: Zero Data Retention (ZDR) is an account-level setting, not a per-request header.
+  // Contact Anthropic support to enable ZDR on your org before using with real employee PII.
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
 async function runTurnAnthropic({ system, messages, tools }) {
