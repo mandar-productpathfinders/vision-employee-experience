@@ -197,6 +197,9 @@ When the response arrives, you will see Arjun greeted by name, with a brief ackn
 
 ---
 
+### Admin Tool
+Check if the HRProfile tool is set above IT Onboarding profile. If not then using the arrows move HRProfile at the top. 
+
 ## Section 3: The Personalisation Experiment
 
 This is the core demonstration of the lab — and it is conceptually the same demonstration as Use Case 1, with one important difference. Where UC1 personalised on **affinity data** (Priya likes ethnic wear, Rahul likes sportswear), UC2 personalises on **life-event state** (Arjun is mid-onboarding, Vishy is not).
@@ -295,11 +298,24 @@ Re-send the same message as Vishy with trace on:
 
 No `list_pending_tasks` call (no event = no task list to read). The agent goes directly to capturing the laptop request. **The same agent code took a different path through the tools because the data layer returned different state.**
 
+### PII is masked in the trace
+
+The trace is also part of the PII design. Before any tool input is written to the trace — whether it is shown in the panel, returned to the browser, or persisted — sensitive fields are redacted to `***`. If you inspect a `submit_*` entry, you will never see a PAN or bank account in the trace; the agent's `maskPiiFields()` helper replaces them first. And because `submit_hr_profile` is blocked from the chat path entirely, the most sensitive tool is one you will only ever see in the trace as a masked, blocked entry — never as a successful call carrying real data.
+
+### The trace is now persisted (and masked)
+
+After every tool call the agent fires a masked record at `POST /traces` on hrms-api, which writes a row to the `agent_traces` table. This is fire-and-forget, so it never slows the chat response. The masking happens before the post, so the durable audit log never contains raw PII. You can confirm it is filling up:
+
+```bash
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
+  -c "SELECT turn_number, tool_name, latency_ms FROM agent_traces ORDER BY id DESC LIMIT 8;"
+```
+
 ### What Trace Mode is Good For
 
 - **Debugging surprising behaviour.** "Why did the agent ask twice for the cost centre?" — look at whether `get_employee_profile` was called and what it returned.
 - **Demonstrating the system to stakeholders.** A trace is more convincing than a chat transcript. It shows the agent really did look up the data.
-- **Auditing.** This is the per-turn record. Practitioner Challenge 2 (from Part 2 of the blog series) is to wire this into the `agent_traces` table so the record is durable.
+- **Auditing.** This is the per-turn record — and it is now durable. The agent persists a masked copy of every tool call to the `agent_traces` table via `POST /traces`. (Earlier drafts described this persistence as an unbuilt exercise — "Practitioner Challenge 2" in the blog series. It is now part of the running system; the open follow-on is building a trace-viewer UI and a retention policy on top of it.)
 
 ---
 
@@ -322,25 +338,45 @@ The token is intercepted by the frontend. The chat does NOT display it. Instead,
 | Tab | Maps to | Fields |
 |---|---|---|
 | **IT** | `submit_it_onboarding` | Laptop preference, drop destination. Work number, emergency contact, and cost centre auto-populate from the HR profile. |
-| **HR** | `submit_hr_profile` | PAN, bank name, bank account, IFSC, tax regime. |
+| **HR** | `submit_hr_profile` *(form-only — see below)* | PAN, bank name, bank account, IFSC, tax regime. The financial fields are encrypted at rest. |
 | **ACCESS** | `submit_access_request` | GitHub username, Slack display name, additional tools. |
 
 The DOCUMENT and CONNECT categories are not currently in the form modal — they remain chat-only in this release. This is a known limitation called out in CLAUDE.md as a future enhancement.
+
+The HR tab is special. It is the **only** way the agent-driven experience collects PAN and bank details, because `submit_hr_profile` is blocked from the chat path (Lab 2, Section 5). The form posts straight to `onboarding-api`, which encrypts the financial fields before they touch the database.
 
 Fill in any one tab and click Submit. Verify in psql:
 
 ```bash
 docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
-  -c "SELECT * FROM hr_profile_submissions ORDER BY id DESC LIMIT 1;"
+  -c "SELECT employee_id, tax_regime, bank_name, pan_number FROM hr_profile_submissions ORDER BY id DESC LIMIT 1;"
 ```
 
-You should see your submission. The corresponding row in `employee_task_status` is now `completed`.
+You should see your submission — but note that `pan_number` comes back as an **encrypted blob**, not the value you typed. `tax_regime` and `bank_name` are readable; the financial identifiers are not. The corresponding row in `employee_task_status` is now `completed`.
 
 ### The Mechanism
 
 The handoff between chat and form is a control token returned by the agent in plain text. The frontend's chat renderer scans every response for `FORM:<event_code>` and, when it finds one, opens the modal for that event. The chat does not display the token. To the user, the form just appeared.
 
 This is a deliberately low-tech mechanism. It does not require a special tool, a special API, or a special UI framework. The agent's prompt has one rule: *"If the employee asks to do all tasks or has not named a specific one, return the token FORM:JUST_JOINED so the UI opens the onboarding form."* That single rule is the entire chat-to-form bridge.
+
+### The PII doorway — when the agent refuses to take data in chat
+
+There is a second, narrower token: `FORM:JJ_HR_PROFILE`. It exists for one reason — to keep financial identifiers out of the chat transcript and out of the model's context window.
+
+Reset to Arjun and try typing a PAN directly into the chat, as a careless user might:
+
+> `My PAN is ABCDE1234F, can you update my HR profile?`
+
+The agent does **not** acknowledge or repeat the number. Its prompt carries a mandatory rule (you read it in Lab 1): never accept PAN, bank account, or IFSC in chat; instead emit `FORM:JJ_HR_PROFILE` on a line by itself. So the agent responds with something like *"For your security I won't take financial details in chat — I've opened the secure HR profile form for you,"* and the frontend intercepts the token and opens the modal **directly on the HR tab** (step 2, with `JJ_HR_PROFILE` pre-selected). The PAN you typed is never echoed back, never written to the trace in clear text, and never sent to a tool.
+
+Two layers make this real, and you have now seen all three:
+
+1. **Prompt (policy)** — the mandatory PII rule in the JUST_JOINED prompt (Lab 1).
+2. **Agent (enforcement)** — `submit_hr_profile` is in `FORM_ONLY_TOOLS`; even if the model tried to call it, the loop blocks it and masks the trace (Lab 2).
+3. **Frontend (handoff)** — the `FORM:JJ_HR_PROFILE` token opens the secure form so the data is captured and encrypted without ever transiting the LLM (this section).
+
+Defence in depth: any one layer failing does not leak the PAN, because the next layer also has to fail.
 
 ---
 
@@ -551,6 +587,23 @@ async function runTurnOpenAI({ system, messages, tools }) {
 
 The two implementations expose the same shape — `{ assistantMessage, text, toolCalls, stopReason, model }`. The agent's loop is provider-agnostic. To switch providers, change `MODEL_PROVIDER` in `.env` and restart the agent container. The conversation, the prompt, the tools, the trace all remain identical.
 
+### Data retention is set at the provider boundary
+
+Both provider clients are configured so the model vendor does not retain or train on the request data — the last piece of the PII story, sitting right where data leaves your container:
+
+```javascript
+// Anthropic client — zero-data-retention beta header
+new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  defaultHeaders: { "anthropic-beta": "zdr-2025-04-01" },
+});
+
+// OpenAI request — opt out of storage
+openai.chat.completions.create({ model, messages, tools, store: false });
+```
+
+The Anthropic ZDR header requests zero data retention; note it must also be enabled at the organisation level (contact Anthropic support) before it takes effect in production. OpenAI's `store: false` opts each request out of storage. Together with the encryption-at-rest, the form-first PII handling, and the masked trace, this means a financial identifier that does reach the model (it should not, by design) is at least not retained by the vendor.
+
 ---
 
 ## Test Cases — Lab 3
@@ -609,6 +662,15 @@ T3.8 — Trace for Vishy lacks list_pending_tasks
   As Vishy: type "Hello"
   Expected: trace shows get_employee_profile, list_employee_events only
             (no list_pending_tasks because there is no active event)
+
+T3.8b — PII never enters the chat (the security headline)
+  As Arjun: type "My PAN is ABCDE1234F, please update my HR profile"
+  Expected:
+    - the agent does NOT repeat or confirm the PAN value
+    - the secure HR form opens automatically on the HR tab (step 2)
+    - the chat does NOT display a FORM:JJ_HR_PROFILE token
+  With trace on: no submit_hr_profile call appears as a successful tool call;
+    if the model attempted one it shows as a masked, blocked entry
 ```
 
 ### Admin Console Tests
@@ -683,15 +745,37 @@ curl -s "http://localhost:8200/debug/prompt?event_code=JUST_JOINED" | python3 -c
 curl -s "http://localhost:8200/debug/tools?event_code=JUST_JOINED" | python3 -c "import sys,json; d=json.load(sys.stdin); print('tools:', len(d['tools'])); [print(' -', t['name']) for t in d['tools']]"
 # Expected: 9 or 10 tools depending on whether you ran T3.14
 
-# T3.19 — Confirm trace persistence is not yet wired (Practitioner Challenge 2)
+# T3.19 — Trace persistence IS wired, and masked
+# (Run after you have exchanged a few chat turns above.)
 docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
   -c "SELECT COUNT(*) FROM agent_traces;"
-# Expected: count = 0
-# The schema is ready; the agent does not yet write here.
-# Practitioner Challenge 2 from Part 2 is to fix this.
+# Expected: count > 0 — the agent writes a row per tool call via POST /traces
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
+  -c "SELECT tool_name, tool_input FROM agent_traces ORDER BY id DESC LIMIT 5;"
+# Expected: recent tool calls; any PII fields (pan_number, bank_account, ifsc_code)
+#           appear as "***", never as real values
+
+# T3.20 — submit_hr_profile is blocked from the agent path
+curl -s -X POST http://localhost:8200/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "employee_id": "E1001",
+    "session_id": "lab3-pii-test",
+    "event_code": "JUST_JOINED",
+    "messages": [{"role": "user", "content": "My PAN is ABCDE1234F and bank account 1234567890, save my HR profile"}]
+  }' | python3 -m json.tool | head -50
+# Expected: the reply steers the user to the secure form (emits/handles FORM:JJ_HR_PROFILE);
+#           the trace shows NO successful submit_hr_profile call.
+#           If the model attempted it, the entry is masked and marked blocked.
+
+# T3.21 — Stored HR financial fields are encrypted at rest
+# (Run after submitting the HR form for any employee.)
+docker exec -it ve-emp-postgres psql -U visionuser -d vision_employee \
+  -c "SELECT pan_number FROM hr_profile_submissions ORDER BY id DESC LIMIT 1;"
+# Expected: an unreadable encrypted blob, NOT a plaintext PAN
 ```
 
-All 19 tests passing means the full stack works end-to-end.
+All 21 tests passing means the full stack works end-to-end — including the PII controls.
 
 ---
 
@@ -717,6 +801,9 @@ After completing this lab, try explaining these concepts without looking at your
 6. **What would change if you switched from Anthropic to OpenAI in `.env` and restarted the agent?**
    Hint: Look at `agent/lib/provider.js`. What is the same; what is different?
 
+7. **A user pastes their PAN into the chat. Trace the three things that stop it from leaking.**
+   Hint: one rule in the prompt, one list in the agent, one token handled by the frontend — plus what happens to the value at rest and at the model boundary.
+
 ---
 
 ## Troubleshooting
@@ -728,6 +815,8 @@ After completing this lab, try explaining these concepts without looking at your
 | Agent responses are generic and ignore Arjun's onboarding state | Tool calls failing — agent has no profile/event data | Open trace; check `ok: false` rows for the failing tool |
 | `tool_count: 0` in the footer | MCP server cannot reach admin-api | `curl http://localhost:8100/health` — check `last_reload_error` |
 | Form modal does not open after "give me everything" | The `FORM:JUST_JOINED` token rule was removed from the prompt | Restore the rule in Admin Console under JUST_JOINED → CONVERSATION RULES |
+| HR form does not open when a PAN is typed in chat | The mandatory PII rule was edited out of the JUST_JOINED prompt | Restore the "PII HANDLING RULE" line under CONVERSATION RULES (it emits `FORM:JJ_HR_PROFILE`) |
+| `agent_traces` is empty | No tool calls have run yet, or hrms-api `/traces` is unreachable | Exchange a chat turn first; check `docker compose logs hrms-api` and the agent logs |
 | `+ Add announcement tool` returns 409 | Tool already exists in admin_tools | `DELETE FROM admin_tools WHERE tool_name='send_joiner_announcement'` then retry |
 | Anthropic 529 overloaded | API rate limited | Wait 10–20 seconds and retry; or switch provider to OpenAI |
 | Prompt changes have no effect | Browser cached an old response | Hard refresh with Ctrl+Shift+R; the agent always loads fresh prompt server-side |
@@ -745,6 +834,7 @@ In this lab you:
 5. Sent a "give me everything" message and watched the chat doorway hand off to the consolidated form doorway via the FORM:JUST_JOINED control token
 6. Edited the JUST_JOINED prompt in the Admin Console and observed the change land on the next turn — with a new version row in `admin_prompts`
 7. Added the send_joiner_announcement tool LIVE through the Admin Console and watched the agent call it on the next chat turn — with no redeploy
+8. Saw the user-facing half of the PII design end-to-end: a PAN typed into chat is refused, the secure `FORM:JJ_HR_PROFILE` form opens instead, the value is encrypted at rest, the trace is masked and persisted, and the model boundary is set to zero-data-retention
 
 ---
 
@@ -754,17 +844,20 @@ Across all three labs you have set up and understood a complete AI-agent-powered
 
 ```
 Lab 1  →  Data Layer
-           PostgreSQL (14 tables) + Redis (60s profile cache)
+           PostgreSQL (14 tables) + Redis (authenticated, 60s profile cache)
            Key tables: admin_prompts (policy as data) + admin_tools (capabilities as data)
+           PII: pgcrypto encryption at rest on PAN/bank/IFSC
 
 Lab 2  →  Service Layer
            7 FastAPI microservices + MCP tool gateway
            MCP polls admin_tools every 5s — adding a tool is a SQL INSERT, not a code change
+           PII: submit_hr_profile blocked from the agent; masked POST /traces audit log
 
 Lab 3  →  Agent Layer
            1 onboarding agent + Admin Console + Employee Portal
            Two-tier prompt (ROUTER + event specialist); chat AND form doorways
            Provider portability: Anthropic OR OpenAI behind one runTurn() function
+           PII: chat refuses financial data → FORM:JJ_HR_PROFILE; ZDR / store:false at the model boundary
 ```
 
 This is the same architectural pattern used in production internal AI applications:
@@ -774,7 +867,8 @@ This is the same architectural pattern used in production internal AI applicatio
 - **Prompts as data** so policy can be edited, versioned, and audited without code changes
 - **Tool registry as data** so capabilities can be added or removed at runtime
 - **Provider abstraction** so the choice of LLM is an environment decision, not a code commitment
-- **Trace as audit log** for every conversation — already returned by the agent, ready to be persisted (Practitioner Challenge 2)
+- **Trace as audit log** for every conversation — masked and persisted to `agent_traces` after every tool call
+- **PII handled in depth** — kept out of the LLM by prompt rule + agent block + form handoff, encrypted at rest, and not retained at the model boundary
 
 The architecture and the operating model are two halves of the same investment. The labs gave you the architecture. The blog series Part 3 walks you through what the operating model needs to look like alongside it.
 
@@ -789,7 +883,7 @@ The architecture and the operating model are two halves of the same investment. 
 
 - **The four extension challenges** from Part 2:
   1. Add a second life-event end-to-end (PROMOTION, TRAVEL, etc.)
-  2. Wire `agent_traces` to the database for durable audit
+  2. Build a trace-viewer UI and a retention policy on top of the now-persisted `agent_traces` (the persistence itself is already done)
   3. Add a tool-level approval gate for high-risk tools
   4. Make the model provider a per-request choice
 
